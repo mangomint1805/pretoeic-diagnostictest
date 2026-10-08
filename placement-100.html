@@ -408,13 +408,12 @@ au.addEventListener('timeupdate',()=>{
 });
 au.addEventListener('pause',()=>{ if(audioStarted && !au.ended && S.stage==='listening') au.play().catch(()=>audioTrouble()); });
 /* ---------- audio recovery: phát tiếp khi audio bị dừng, mở phần Đọc nếu audio không phát xong ---------- */
-const AUDIO_LEN_FALLBACK=1296; // độ dài audio (giây), dùng khi chưa đọc được từ file
-const AUDIO_GRACE=120; // chờ thêm 2 phút sau thời lượng audio rồi mới mở phần Đọc
+const AUDIO_STOP_LIMIT=120; // audio dừng quá 2 phút thì cho sang phần Đọc
 let lastT=-1, stuckSec=0, troubleNoted=false;
 function audioTrouble(msg){
   if(!S || !audioStarted || au.ended || S.audioDone || S.stage!=='listening') return;
   $('btnResume').classList.remove('hidden');
-  $('audioMeta').textContent=msg||'Audio bị dừng. Bấm "Phát tiếp từ chỗ dừng" để nghe tiếp.';
+  $('audioMeta').textContent=msg||'Audio bị dừng. Bấm "Phát tiếp từ chỗ dừng" để nghe tiếp. Nếu audio dừng quá 2 phút, bạn sẽ được sang phần Đọc.';
   if(!troubleNoted){ troubleNoted=true; S.notes.push({t:nowISO(),type:'Audio bị dừng/lỗi tại '+fmt(S.audioTime)}); save(); }
 }
 au.addEventListener('error',()=>audioTrouble('Audio bị lỗi khi tải. Bấm "Phát tiếp từ chỗ dừng".'));
@@ -428,22 +427,20 @@ $('btnResume').onclick=()=>{
   if(au.error || au.readyState<1){ au.src=AUDIO_SRC+'?r='+Date.now(); au.addEventListener('loadedmetadata',go,{once:true}); au.load(); }
   else go();
 };
-function audioUnlockAt(){
-  if(!S || !S.audioStartedAt) return Infinity;
-  const len=(isFinite(au.duration)&&au.duration>0)?au.duration:(S.audioLen||AUDIO_LEN_FALLBACK);
-  return new Date(S.audioStartedAt).getTime()+(len+AUDIO_GRACE)*1000;
-}
 setInterval(()=>{
-  if(!S || S.stage!=='listening' || S.audioDone) return;
-  if(isFinite(au.duration)&&au.duration>0) S.audioLen=au.duration;
+  if(!S || S.stage!=='listening' || S.audioDone || !S.audioStartedAt) return;
   if(audioStarted && !au.ended){
     if(Math.abs(au.currentTime-lastT)<0.1){ stuckSec+=2; if(stuckSec>=10) audioTrouble(); } else stuckSec=0;
     lastT=au.currentTime;
   }
-  if(Date.now()>audioUnlockAt() && $('btnToReading').disabled){
+  // audio có đang phát thật không (đã bấm phát, không tạm dừng, thời gian vẫn chạy)
+  const playingNow = audioStarted && !au.paused && !au.ended && stuckSec<10;
+  if(!playingNow){ if(!S.audioStopSince){ S.audioStopSince=Date.now(); save(); } }
+  else if(S.audioStopSince){ S.audioStopSince=0; save(); }
+  if(S.audioStopSince && Date.now()-S.audioStopSince>AUDIO_STOP_LIMIT*1000 && $('btnToReading').disabled){
     $('btnToReading').disabled=false;
-    $('toReadNote').textContent=HAS_READ?'Audio gặp sự cố nên phần Nghe đã kết thúc. Kiểm tra lại đáp án rồi bấm để sang phần Đọc.':'Audio gặp sự cố. Kiểm tra lại đáp án rồi bấm Nộp bài.';
-    S.notes.push({t:nowISO(),type:'Mở phần Đọc do audio không phát xong'}); save();
+    $('toReadNote').textContent=HAS_READ?'Audio bị dừng quá 2 phút nên phần Nghe đã kết thúc. Kiểm tra lại đáp án rồi bấm để sang phần Đọc.':'Audio bị dừng quá 2 phút. Kiểm tra lại đáp án rồi bấm Nộp bài.';
+    S.notes.push({t:nowISO(),type:'Mở phần Đọc do audio dừng quá 2 phút (tại '+fmt(S.audioTime)+')'}); save();
   }
 },2000);
 au.addEventListener('ended',()=>{
